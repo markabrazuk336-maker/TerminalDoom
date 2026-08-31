@@ -21,6 +21,13 @@ DOOR_CLOSE = {3, 16, 42, 50, 75, 76, 107, 110, 113, 116}
 LIFTS = {10, 21, 62, 88, 120, 121, 122, 123}
 FLOOR_RAISE = {5, 24, 64, 91, 101, 18, 69, 119, 128, 129, 130, 131}
 FLOOR_LOWER = {19, 23, 36, 37, 38, 45, 60, 70, 82, 83, 84, 102}
+STAIRS8 = {7, 8, 256, 258}
+STAIRS16 = {100, 127, 257, 259}
+CRUSHERS = {6, 25, 49, 73, 77, 141}
+CEIL_LOWER = {41, 43, 44, 72}
+CEIL_RAISE = {40}
+CRUSH_STOP = {57, 74}
+DONUT = {9}
 EXITS = {11, 51, 52, 124}
 TELEPORTS = {39, 97, 125, 126}
 KEYED = {26: 'blue', 32: 'blue', 99: 'blue', 133: 'blue',
@@ -118,6 +125,51 @@ class FloorMove:
            (self.speed < 0 and s.floor <= self.target):
             s.floor = self.target
             self.done = True
+
+
+class CeilingMove:
+    """Движение потолка: опускание, подъём и раздавливающий пресс."""
+
+    def __init__(self, sector, target, speed=45.0, crush=False, top=None):
+        self.sector = sector
+        self.target = target
+        self.speed = speed
+        self.crush = crush
+        self.top = sector.ceil if top is None else top
+        self.dir = -1 if target < sector.ceil else 1
+        self.done = False
+        self.hurt_t = 0.0
+
+    def tick(self, dt, game):
+        s = self.sector
+        s.ceil += self.speed * dt * self.dir
+        if self.crush:
+            self.hurt_t += dt
+            if self.hurt_t > 0.45:
+                self.hurt_t = 0.0
+                self.squash(game)
+        if self.dir < 0 and s.ceil <= self.target:
+            s.ceil = self.target
+            if self.crush:
+                self.dir = 1                    # пресс поехал обратно вверх
+            else:
+                self.done = True
+        elif self.dir > 0 and s.ceil >= self.top:
+            s.ceil = self.top
+            if self.crush:
+                self.dir = -1
+            else:
+                self.done = True
+
+    def squash(self, game):
+        s = self.sector
+        p = game.player
+        if game.md.sector_at(p.x, p.y) is s and p.z + HEIGHT > s.ceil:
+            p.hurt(10)
+        for o in game.mobjs:
+            if o.shootable and not o.dead and o.sector is s and \
+                    o.z + o.height > s.ceil:
+                o.hurt(10, None)
 
 
 class Game:
@@ -351,6 +403,20 @@ class Game:
             return self.tagged(line.tag, self.raise_floor)
         if sp in FLOOR_LOWER:
             return self.tagged(line.tag, self.lower_floor)
+        if sp in STAIRS8:
+            return self.tagged(line.tag, lambda sec: self.build_stairs(sec, 8.0))
+        if sp in STAIRS16:
+            return self.tagged(line.tag, lambda sec: self.build_stairs(sec, 16.0, 60.0))
+        if sp in CRUSHERS:
+            return self.tagged(line.tag, self.make_crusher)
+        if sp in CEIL_LOWER:
+            return self.tagged(line.tag, self.lower_ceiling)
+        if sp in CEIL_RAISE:
+            return self.tagged(line.tag, self.raise_ceiling)
+        if sp in CRUSH_STOP:
+            return self.stop_crushers(line.tag)
+        if sp in DONUT:
+            return self.tagged(line.tag, self.make_donut)
         if use:
             self.sound.play('DSSWTCHN', 2)
         return False
@@ -405,6 +471,106 @@ class Game:
         self.sound.play('DSSTNMOV', 1)
         return self.add(FloorMove(sec, target))
 
+    def build_stairs(self, sec, step, speed=30.0):
+        """Лестница: соседние секторы с тем же полом поднимаются ступенями."""
+        height = sec.floor
+        cur = sec
+        used = set()
+        made = 0
+        while made < 64:
+            height += step
+            if id(cur) in self.busy and made:
+                break
+            self.add(FloorMove(cur, height, speed))
+            used.add(id(cur))
+            made += 1
+            nxt = None
+            for ln in cur.lines:
+                if ln.front is None or ln.back is None:
+                    continue
+                if ln.front.sector is not cur:
+                    continue                    # идём только по передней стороне
+                cand = ln.back.sector
+                if id(cand) in used or cand.floorpic != cur.floorpic:
+                    continue
+                nxt = cand
+                break
+            if nxt is None:
+                break
+            cur = nxt
+        if made:
+            self.sound.play('DSSTNMOV', 2)
+        return made > 0
+
+    def make_crusher(self, sec):
+        self.sound.play('DSPSTART', 2)
+        return self.add(CeilingMove(sec, sec.floor + 8.0, 45.0, crush=True,
+                                    top=sec.ceil))
+
+    def lower_ceiling(self, sec):
+        target = sec.floor + 8.0
+        if sec.ceil <= target:
+            return False
+        self.sound.play('DSSTNMOV', 1)
+        return self.add(CeilingMove(sec, target, 45.0))
+
+    def raise_ceiling(self, sec):
+        target = self.highest_neighbour_ceiling(sec)
+        if target <= sec.ceil:
+            return False
+        self.sound.play('DSSTNMOV', 1)
+        return self.add(CeilingMove(sec, target, 45.0, top=target))
+
+    def stop_crushers(self, tag):
+        hit = False
+        for t in list(self.thinkers):
+            if isinstance(t, CeilingMove) and t.crush and t.sector.tag == tag:
+                t.done = True
+                hit = True
+        return hit
+
+    def make_donut(self, sec):
+        """«Пончик»: столб опускается, кольцо вокруг него встаёт вровень."""
+        ring = None
+        for ln in sec.lines:
+            for sd in (ln.front, ln.back):
+                if sd is not None and sd.sector is not sec:
+                    ring = sd.sector
+                    break
+            if ring:
+                break
+        if ring is None:
+            return False
+        outer = None
+        for ln in ring.lines:
+            for sd in (ln.front, ln.back):
+                if sd is not None and sd.sector is not ring and sd.sector is not sec:
+                    outer = sd.sector
+                    break
+            if outer:
+                break
+        target = outer.floor if outer else ring.floor
+        ok = False
+        if sec.floor > target:
+            ok = self.add(FloorMove(sec, target, 40.0))
+        if ring.floor != target and id(ring) not in self.busy:
+            self.thinkers.append(FloorMove(ring, target, 40.0))
+            self.busy[id(ring)] = self.thinkers[-1]
+            ring.floorpic = outer.floorpic if outer else ring.floorpic
+            ok = True
+        if ok:
+            self.sound.play('DSSTNMOV', 2)
+        return ok
+
+    @staticmethod
+    def highest_neighbour_ceiling(sec):
+        best = sec.ceil
+        for ln in sec.lines:
+            for sd in (ln.front, ln.back):
+                if sd is not None and sd.sector is not sec and sd.sector.ceil > best:
+                    best = sd.sector.ceil
+        return best
+
     def teleport(self, line):
         if line.back is None:
             return False
@@ -450,7 +616,9 @@ class Game:
         return best
 
     # ------------------------------------------------------------ бой
-    def hitscan(self, shooter, angle, rng, damage, melee=False):
+    def hitscan(self, shooter, angle, rng, damage, melee=False, aim_z=None,
+                slope=0.0):
+        """Луч выстрела: цепляет и монстров, и игрока. slope — наклон вверх/вниз."""
         p = self.player
         x0, y0 = shooter.x, shooter.y
         z = p.viewz if shooter is p else shooter.z + shooter.height * 0.6
@@ -459,6 +627,9 @@ class Game:
         frac, ln = self.md.trace(x0, y0, x0 + ca * rng, y0 + sa * rng, z)
         bestd = frac * rng
         best = None
+        # цель по вертикали: наклон взгляда или прицел монстра
+        if aim_z is not None and rng > 1.0:
+            slope = (aim_z - z) / rng
         for o in self.mobjs:
             if o is shooter or o.remove or not o.shootable or o.dead:
                 continue
@@ -469,11 +640,22 @@ class Game:
                 continue
             if abs(-dx * sa + dy * ca) > o.radius:
                 continue
-            slope = 40.0 + t * 0.25          # чем дальше, тем шире конус
-            if o.z - slope > z or o.z + o.height + slope < z:
+            zz = z + slope * t
+            tol = 40.0 + t * 0.25            # чем дальше, тем шире конус
+            if o.z - tol > zz or o.z + o.height + tol < zz:
                 continue
             bestd = t
             best = o
+        if shooter is not p and p.health > 0:
+            dx = p.x - x0
+            dy = p.y - y0
+            t = dx * ca + dy * sa
+            if 0.0 < t < bestd and abs(-dx * sa + dy * ca) < 20.0:
+                zz = z + slope * t
+                if p.z - 24.0 <= zz <= p.z + 72.0:
+                    p.hurt(damage, shooter)
+                    self.spawn_effect('BLUD', 'CBA', p.x, p.y, p.z + 28.0, False)
+                    return True
         hx = x0 + ca * bestd
         hy = y0 + sa * bestd
         if best is not None:
@@ -525,14 +707,14 @@ class Game:
             self.blockers.append(m)
         return m
 
-    def splash(self, x, y, z, radius, damage):
+    def splash(self, x, y, z, radius, damage, source=None):
         p = self.player
         for o in list(self.mobjs):
             if not o.shootable or o.dead or o.remove:
                 continue
             d = math.hypot(o.x - x, o.y - y)
             if d < radius:
-                o.hurt(int(damage * (1.0 - d / radius)), None)
+                o.hurt(int(damage * (1.0 - d / radius)), source)
         d = math.hypot(p.x - x, p.y - y)
         if d < radius:
             p.hurt(int(damage * 0.6 * (1.0 - d / radius)))

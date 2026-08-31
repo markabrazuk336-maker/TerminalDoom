@@ -5,6 +5,10 @@ import random
 from . import things as TH
 from . import sprites as SP
 
+def tgt_radius(t):
+    return getattr(t, 'radius', 16.0)
+
+
 MELEE_RANGE = 64.0
 MISSILE_RANGE = 2048.0
 GRAVITY = 1100.0
@@ -126,8 +130,8 @@ class Mobj:
         return True
 
     def step(self, dist):
-        a = math.atan2(self.game.player.y - self.y, self.game.player.x - self.x) \
-            if self.target else self.angle
+        t = self.target
+        a = math.atan2(t.y - self.y, t.x - self.x) if t is not None else self.angle
         for d in (0.0, 0.5, -0.5, 1.1, -1.1):
             ang = a + d
             nx = self.x + math.cos(ang) * dist
@@ -143,7 +147,8 @@ class Mobj:
         sec = self.game.md.sector_at(self.x, self.y)
         self.sector = sec
         if self.floating:
-            want = self.game.player.viewz - self.height * 0.5
+            t = self.target if self.target is not None else self.game.player
+            want = self.aim_z(t) - self.height * 0.5
             lo = sec.floor + 8.0
             hi = sec.ceil - self.height - 8.0
             if want < lo:
@@ -199,10 +204,26 @@ class Mobj:
                 self.seq[self.si] = (self.frame, None, None)
         return False
 
+    # ------------------------------------------------------------ цель
+    @staticmethod
+    def alive(t):
+        return t is not None and t.health > 0 and not getattr(t, 'dead', False)
+
+    @staticmethod
+    def aim_z(t):
+        """Куда целиться: глаза игрока или середина монстра."""
+        vz = getattr(t, 'viewz', None)
+        return (vz - 12.0) if vz is not None else (t.z + t.height * 0.5)
+
+    def valid_target(self):
+        if self.alive(self.target) and getattr(self.target, 'remove', False) is False:
+            return self.target
+        self.target = None
+        return None
+
     # ------------------------------------------------------------ ИИ
     def tick_monster(self, dt, t):
         g = self.game
-        p = g.player
         if self.dead:
             self.advance(dt)
             if self.seq and self.seq[self.si][1] is None:
@@ -215,41 +236,51 @@ class Mobj:
             return
 
         if self.state == 'attack':
-            done = self.advance(dt)
-            if done:
+            if self.advance(dt):
                 self.set_seq(self.info['walk'], 'chase')
             return
 
-        dist = self.dist_to(p)
-
         if self.state == 'idle':
+            p = g.player
             self.look_t -= dt
             if self.look_t <= 0.0:
                 self.look_t = 0.25
-                if p.health > 0 and dist < 2200.0 and self.sight_to(p.x, p.y):
+                d = self.dist_to(p)
+                if p.health > 0 and d < 2200.0 and self.sight_to(p.x, p.y):
                     a = math.atan2(p.y - self.y, p.x - self.x)
                     rel = abs(((a - self.angle + math.pi) % math.tau) - math.pi)
-                    if rel < 1.6 or dist < 300.0:
-                        self.wake()
+                    if rel < 1.6 or d < 300.0:
+                        self.wake(p)
             return
 
         # преследование
         self.advance(dt)
         if self.seq is None:
             self.set_seq(self.info['walk'], 'chase')
-        if p.health <= 0:
+        tgt = self.valid_target()
+        if tgt is None:
+            p = g.player
+            if p.health > 0:
+                self.target = p                # цель погибла — снова за игроком
+                tgt = p
+            else:
+                self.state = 'idle'
+                return
+        dist = self.dist_to(tgt)
+
+        if self.info.get('heal') and self.try_resurrect():
             return
 
         self.threshold -= dt
         melee = self.info.get('melee')
-        if melee and dist < MELEE_RANGE + self.radius:
+        if melee and dist < MELEE_RANGE + self.radius + tgt_radius(tgt):
             self.set_seq(self.info['atk'], 'attack')
             if self.info.get('attack'):
                 g.sound.play(self.info['attack'], 2)
             return
         if self.threshold <= 0.0 and dist < 1600.0:
             has_ranged = self.info.get('missile') or self.info.get('hitscan')
-            if has_ranged and self.sight_to(p.x, p.y):
+            if has_ranged and self.sight_to(tgt.x, tgt.y):
                 chance = 0.55 if dist < 800.0 else 0.3
                 if random.random() < chance:
                     self.threshold = 1.3 + random.random() * 1.4
@@ -259,7 +290,7 @@ class Mobj:
                     return
                 self.threshold = 0.6
 
-        if self.info.get('charge') and dist < 900.0 and self.sight_to(p.x, p.y):
+        if self.info.get('charge') and dist < 900.0 and self.sight_to(tgt.x, tgt.y):
             self.set_seq(self.info['atk'], 'attack')
             return
 
@@ -269,52 +300,84 @@ class Mobj:
             self.update_z(self.move_t)
             self.move_t = 0.0
 
-    def wake(self):
-        self.target = self.game.player
+    def wake(self, target=None):
+        self.target = target if target is not None else self.game.player
         self.threshold = 0.5 + random.random() * 0.5     # время реакции
         self.set_seq(self.info['walk'], 'chase')
         s = self.info.get('see')
         if s:
             self.game.sound.play(s, 1)
 
+    def try_resurrect(self):
+        """Архвайл поднимает ближайший труп."""
+        g = self.game
+        for o in g.mobjs:
+            if not o.dead or o.kind != 'monster' or o.remove or o is self:
+                continue
+            if o.info.get('boss') or not o.info.get('die'):
+                continue
+            if abs(o.x - self.x) > 96.0 or abs(o.y - self.y) > 96.0:
+                continue
+            o.resurrect()
+            self.set_seq(self.info.get('heal'), 'attack')
+            g.sound.play('DSSLOP', 2)
+            return True
+        return False
+
+    def resurrect(self):
+        g = self.game
+        self.dead = False
+        self.health = self.info['hp']
+        self.solid = True
+        self.shootable = True
+        self.floating = bool(self.info.get('float'))
+        self.counted = False
+        g.kills = max(0, g.kills - 1)
+        if self not in g.blockers:
+            g.blockers.append(self)
+        self.target = g.player
+        self.set_seq(self.info['walk'], 'chase')
+
     def do_action(self, act):
         g = self.game
-        p = g.player
         if act == 'fall':
             self.solid = False
             if self in g.blockers:
                 g.blockers.remove(self)
             return
-        if p.health <= 0:
+        tgt = self.valid_target() or g.player
+        if not self.alive(tgt):
             return
-        self.angle = math.atan2(p.y - self.y, p.x - self.x)
+        self.angle = math.atan2(tgt.y - self.y, tgt.x - self.x)
         if act == 'melee':
-            if self.dist_to(p) < MELEE_RANGE + self.radius + 16.0:
+            if self.dist_to(tgt) < MELEE_RANGE + self.radius + tgt_radius(tgt) + 16.0:
                 a, b = self.info['melee']
-                p.hurt(a * random.randint(1, b), self)
+                tgt.hurt(a * random.randint(1, b), self)
                 g.sound.play(self.info.get('attack'), 2)
         elif act == 'hitscan':
             n, a, b = self.info['hitscan']
-            if self.sight_to(p.x, p.y):
+            if self.sight_to(tgt.x, tgt.y):
                 for _ in range(n):
-                    if random.random() < 0.72:
-                        p.hurt(a * random.randint(1, b), self)
+                    ang = self.angle + (random.random() - 0.5) * 0.09
+                    g.hitscan(self, ang, 2048.0, a * random.randint(1, b),
+                              aim_z=self.aim_z(tgt))
             g.sound.play(self.info.get('attack'), 3)
         elif act == 'charge':
-            if self.dist_to(p) < 90.0:
+            if self.dist_to(tgt) < 90.0:
                 a, b = self.info['melee']
-                p.hurt(a * random.randint(1, b), self)
+                tgt.hurt(a * random.randint(1, b), self)
         elif act == 'soul':
             ang = self.angle
             g.spawn_monster_at(3006, self.x + math.cos(ang) * (self.radius + 24.0),
                                self.y + math.sin(ang) * (self.radius + 24.0), ang)
         elif act == 'attack':
-            if self.info.get('melee') and self.dist_to(p) < MELEE_RANGE + self.radius:
+            if self.info.get('melee') and \
+                    self.dist_to(tgt) < MELEE_RANGE + self.radius + tgt_radius(tgt):
                 a, b = self.info['melee']
-                p.hurt(a * random.randint(1, b), self)
+                tgt.hurt(a * random.randint(1, b), self)
             elif self.info.get('missile'):
-                g.spawn_missile(self, self.info['missile'], p.x, p.y,
-                                p.viewz - 20.0)
+                g.spawn_missile(self, self.info['missile'], tgt.x, tgt.y,
+                                self.aim_z(tgt))
 
     # ------------------------------------------------------------ снаряды
     def tick_missile(self, dt):
@@ -365,12 +428,13 @@ class Mobj:
     def explode(self, hit=None):
         g = self.game
         info = self.info
+        owner = self.target
         if hit is not None:
             a, b = info['damage']
-            dmg = a * random.randint(1, b)
-            hit.hurt(dmg, self.target if self.target is not g.player else g.player)
+            hit.hurt(a * random.randint(1, b), owner)
         if info.get('splash'):
-            g.splash(self.x, self.y, self.z, info['splash'], info['damage'][0] * 4)
+            g.splash(self.x, self.y, self.z, info['splash'],
+                     info['damage'][0] * 4, owner)
         g.sound.play(info.get('hit'), 3)
         self.speed = 0.0
         self.state = 'boom'
@@ -396,9 +460,13 @@ class Mobj:
             return
         if self.kind != 'monster':          # бочки и прочее не «просыпаются»
             return
+        # задел другой монстр — переключаемся на обидчика (кроме своего вида)
+        new_target = self.game.player
+        if source is not None and source is not self and                 getattr(source, 'kind', None) == 'monster' and                 source.type != self.type and not source.dead:
+            new_target = source
+        self.target = new_target
         if self.state == 'idle':
-            self.wake()
-        self.target = self.game.player
+            self.wake(new_target)
         if random.randint(0, 255) < self.info.get('painchance', 0):
             self.set_seq(self.info['hurt'], 'pain')
             self.game.sound.play(self.info.get('pain'), 2)

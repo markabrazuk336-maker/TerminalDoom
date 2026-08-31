@@ -127,5 +127,25 @@ def main():
         print('8) бочка: мертва %s, кадр %s' % (bar.dead, bar.frame))
 
 
+    # 9. драка монстров между собой
+    g8 = build()
+    mons8 = [x for x in g8.mobjs if x.kind == 'monster']
+    imp = next(x for x in mons8 if x.sprite == 'TROO')
+    dem = next(x for x in mons8 if x.sprite == 'SARG')
+    dem.x, dem.y = imp.x + 220.0, imp.y
+    dem.sector = g8.md.sector_at(dem.x, dem.y)
+    dem.z = dem.sector.floor
+    hp0 = dem.health
+    imp.wake()
+    imp.target = dem
+    imp.threshold = 0.0
+    imp.set_seq(imp.info['atk'], 'attack')
+    run(g8, 3.0)
+    print('9) имп -> демон: цель демона %s, здоровье демона %d -> %d, '
+          'здоровье импа %d'
+          % ('имп' if dem.target is imp else str(dem.target), hp0, dem.health,
+             imp.health))
+
+
 if __name__ == '__main__':
     main()

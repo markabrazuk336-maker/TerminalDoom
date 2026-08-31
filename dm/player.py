@@ -64,6 +64,9 @@ class Player:
         self.bob = 0.0
         self.bob_amp = 0.0
         self.onground = True
+        self.pitch = 0.0            # наклон взгляда, тангенс угла
+        self.mouse_dx = 0.0
+        self.mouse_dy = 0.0
 
         self.health = 100
         self.armor = 0
@@ -194,22 +197,24 @@ class Player:
             if self.berserk:
                 dmg *= 10
             hit = g.hitscan(self, self.angle + (random.random() - 0.5) * 0.1,
-                            80.0, dmg, melee=True)
+                            80.0, dmg, melee=True, slope=self.pitch)
             g.sound.play('DSPUNCH' if hit else 'DSPUNCH', 2)
         elif act == 'saw':
             dmg = random.randint(1, 10) * 2
             g.hitscan(self, self.angle + (random.random() - 0.5) * 0.15,
-                      90.0, dmg, melee=True)
+                      90.0, dmg, melee=True, slope=self.pitch)
         elif act == 'bullet':
             n = w.get('pellets', 1)
             a, b = w.get('dmg', (5, 3))
             for _ in range(n):
                 ang = self.angle + (random.random() - 0.5) * w.get('spread', 0.03)
-                g.hitscan(self, ang, 2048.0, a * random.randint(1, b))
+                sl = self.pitch + (random.random() - 0.5) * w.get('spread', 0.03)
+                g.hitscan(self, ang, 2048.0, a * random.randint(1, b), slope=sl)
         elif act in ('rocket', 'plasma', 'bfg'):
             tx = self.x + math.cos(self.angle) * 2048.0
             ty = self.y + math.sin(self.angle) * 2048.0
-            g.spawn_missile(self, w['missile'], tx, ty, self.viewz - 8.0)
+            tz = self.viewz - 8.0 + self.pitch * 2048.0
+            g.spawn_missile(self, w['missile'], tx, ty, tz)
 
     # ------------------------------------------------------------ урон
     def hurt(self, amount, source=None):
@@ -266,7 +271,25 @@ class Player:
             self.angle += turn * dt
         if keys('d') or keys('right'):
             self.angle -= turn * dt
+        if self.mouse_dx:
+            self.angle -= self.mouse_dx * 0.0032
+            self.mouse_dx = 0.0
         self.angle %= math.tau
+
+        # взгляд вверх-вниз
+        if keys('pgup'):
+            self.pitch += 1.6 * dt
+        if keys('pgdn'):
+            self.pitch -= 1.6 * dt
+        if keys('home'):
+            self.pitch = 0.0
+        if self.mouse_dy:
+            self.pitch -= self.mouse_dy * 0.006
+            self.mouse_dy = 0.0
+        if self.pitch > 1.0:
+            self.pitch = 1.0
+        elif self.pitch < -1.0:
+            self.pitch = -1.0
 
         if fwd or side:
             n = math.hypot(fwd, side)
@@ -303,7 +326,7 @@ class Player:
         target = self.z + VIEW_HEIGHT
         self.viewz += (target - self.viewz) * min(1.0, dt * 14.0)
 
-        firing = keys('e') or keys('ctrl') or keys('f')
+        firing = keys('e') or keys('ctrl') or keys('f') or keys('mouse1')
         self.tick_weapon(dt, firing)
 
         for k in self.powers:

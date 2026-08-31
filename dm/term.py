@@ -140,7 +140,69 @@ VK = {
     '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34, '5': 0x35, '6': 0x36,
     '7': 0x37, 'x': 0x58, 'z': 0x5A, 'g': 0x47,
     'comma': 0xBC, 'period': 0xBE,          # шаг вбок, как в оригинале
+    'pgup': 0x21, 'pgdn': 0x22, 'home': 0x24, 'k': 0x4B,
+    'mouse1': 0x01, 'mouse2': 0x02,
 }
+
+
+class Mouse:
+    """Относительное движение мыши: курсор возвращается в центр окна консоли."""
+
+    def __init__(self):
+        import ctypes
+        self.ct = ctypes
+        self.u32 = ctypes.windll.user32
+        self.k32 = ctypes.windll.kernel32
+        self.enabled = False
+        self.cx = self.cy = 0
+
+    class _POINT(object):
+        pass
+
+    def _center(self):
+        import ctypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
+                        ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+
+        hwnd = self.k32.GetConsoleWindow()
+        if not hwnd:
+            return None
+        r = RECT()
+        if not self.u32.GetWindowRect(hwnd, ctypes.byref(r)):
+            return None
+        if self.u32.GetForegroundWindow() != hwnd:
+            return None
+        return ((r.left + r.right) // 2, (r.top + r.bottom) // 2)
+
+    def set(self, on):
+        self.enabled = bool(on)
+        self.u32.ShowCursor(not self.enabled)
+        c = self._center()
+        if c and self.enabled:
+            self.u32.SetCursorPos(c[0], c[1])
+
+    def poll(self):
+        """-> (dx, dy) в пикселях экрана."""
+        if not self.enabled:
+            return 0, 0
+        import ctypes
+
+        class POINT(ctypes.Structure):
+            _fields_ = [('x', ctypes.c_long), ('y', ctypes.c_long)]
+
+        c = self._center()
+        if c is None:
+            return 0, 0
+        p = POINT()
+        if not self.u32.GetCursorPos(ctypes.byref(p)):
+            return 0, 0
+        dx = p.x - c[0]
+        dy = p.y - c[1]
+        if dx or dy:
+            self.u32.SetCursorPos(c[0], c[1])
+        return dx, dy
 
 
 class WinInput:

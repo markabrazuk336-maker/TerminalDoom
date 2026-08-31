@@ -202,6 +202,7 @@ MONSTERS.update({
         walk=seq('AABBCCDDEEFF', 2),
         atk=[('G', 10 * T, None), ('H', 8 * T, None), ('I', 8 * T, 'hitscan'),
              ('J', 8 * T, None)],
+        heal=[('[', 10 * T, None), ('\\', 10 * T, None), (']', 10 * T, None)],
         hurt=seq('Q', 5),
         die=[('R', 7 * T, None), ('S', 7 * T, 'fall'), ('T', 7 * T, None),
              ('U', 7 * T, None), ('V', 7 * T, None), ('W', 7 * T, None),

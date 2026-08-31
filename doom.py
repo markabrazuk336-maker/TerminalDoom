@@ -134,6 +134,14 @@ class App:
         self.gfx = W.Graphics(self.wad)
         self.sprset = SP.SpriteSet(self.wad)
         self.sound = SND.Sound(self.wad, enabled=not args.nosound)
+        self.music = SND.Music(self.wad, enabled=not args.nomusic)
+        self.mouse = None
+        if args.mouse and T.IS_WIN:
+            try:
+                self.mouse = T.Mouse()
+                self.mouse.set(True)
+            except Exception:
+                self.mouse = None
         self.maps = self.wad.maps()
         if not self.maps:
             raise SystemExit('в WAD нет карт')
@@ -152,6 +160,7 @@ class App:
                            self.args.skill)
         if self.ren is not None:
             self.ren.sky_name = sky_for(name)
+        self.music.play_map(name)
         self.state = 'play'
 
     def next_map(self):
@@ -180,6 +189,9 @@ class App:
             draw_automap(frame, game)
         else:
             p = game.player
+            lim = self.view_h * 0.45
+            pitch = p.pitch * self.ren.projy
+            game.view.pitch = lim if pitch > lim else (-lim if pitch < -lim else pitch)
             self.ren.set_palette(p.palette())
             frame.clear(0x000000)
             self.ren.render(frame, self.md, game.view)
@@ -198,9 +210,16 @@ class App:
             return True
         if inp.hit('tab') or inp.hit('m'):
             game.automap = not game.automap
-        if inp.hit('space'):
+        if inp.hit('space') or inp.hit('mouse2'):
             if not game.use():
                 self.sound.play('DSNOWAY', 1)
+        if inp.hit('k') and self.mouse is not None:
+            self.mouse.set(not self.mouse.enabled)
+            game.say('мышь: ' + ('вкл' if self.mouse.enabled else 'выкл'))
+        if self.mouse is not None and self.mouse.enabled:
+            dx, dy = self.mouse.poll()
+            p.mouse_dx += dx
+            p.mouse_dy += dy
         if inp.hit('r'):
             self.load(game.mapname)
             return True
@@ -223,6 +242,7 @@ class App:
         return True
 
     def tick(self, dt, inp):
+        self.music.update(dt)
         if self.state == 'intermission':
             return
         self.game.tick(dt, inp.down)
@@ -300,6 +320,8 @@ def main():
     ap.add_argument('--fov', type=float, default=90.0)
     ap.add_argument('--aspect', type=float, default=1.0)
     ap.add_argument('--nosound', action='store_true')
+    ap.add_argument('--nomusic', action='store_true')
+    ap.add_argument('--mouse', action='store_true', help='управление мышью')
     ap.add_argument('--bench', type=int, default=0)
     ap.add_argument('--selftest', type=int, default=0)
     ap.add_argument('--size', default=None, help='например 120x40')
@@ -309,6 +331,10 @@ def main():
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
         pass
+
+    if args.bench or args.selftest:          # в тестовых режимах не шумим
+        args.nosound = True
+        args.nomusic = True
 
     app = App(args)
     if args.bench:
@@ -378,6 +404,9 @@ def main():
         except Exception:
             pass
         app.sound.stop()
+        app.music.close()
+        if app.mouse is not None:
+            app.mouse.set(False)
         con.restore()
         if args.selftest:
             sys.stdout = real_stdout
