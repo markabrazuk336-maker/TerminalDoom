@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 TerminalDoom contributors
+Copyright (c) 2026 markabrazuk336-maker
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This repository contains engine code only. It ships no game data.
-DOOM, the DOOM engine and its data files are property of id Software / ZeniMax.
-Freedoom (https://freedoom.github.io/) is a separate free content project
-distributed under its own BSD-style license — download it there.

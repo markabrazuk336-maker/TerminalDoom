@@ -145,8 +145,10 @@ python tools/termshot.py E1M1 140 44 30 fire     # кадр в терминал�
 ## Лицензия и данные
 
 Код — MIT, см. [LICENSE](LICENSE). В репозитории **нет игровых данных**: WAD не
-входит в поставку и добавлен в `.gitignore`. DOOM и его файлы принадлежат
-id Software / ZeniMax; Freedoom — отдельный свободный проект со своей лицензией.
+входит в поставку и добавлен в `.gitignore`. Подробности про принадлежность
+файлов DOOM и про Freedoom — в [NOTICE.md](NOTICE.md).
+
+История версий — в [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
