@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Компиляция всех модулей
+        run: python -m compileall -q dm doom.py tools
+
+      - name: Скачать Freedoom (данные для тестов, в репозиторий не входят)
+        run: |
+          curl -sSL -o freedoom.zip https://github.com/freedoom/freedoom/releases/download/v0.12.1/freedoom-0.12.1.zip
+          unzip -q freedoom.zip
+          echo "DOOMWAD=$PWD/freedoom-0.12.1/freedoom1.wad" >> $GITHUB_ENV
+
+      - name: Прогон всех карт (загрузка, логика, рендер)
+        run: python tools/mapsweep.py "$DOOMWAD" 20
+
+      - name: Проверка боевой части
+        run: python tools/combat_test.py
+
+      - name: Прогон игрового цикла
+        run: python doom.py --wad "$DOOMWAD" --selftest 150 --size 100x34 --nosound

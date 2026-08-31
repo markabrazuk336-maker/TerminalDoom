@@ -1,0 +1,22 @@
+# WAD-файлы не выкладываем: freedoom качается отдельно, а doom.wad — коммерческий
+*.wad
+*.WAD
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# отладочные кадры
+shot*.png
+term_*.png
+fight.png
+masked.png
+sky.png
+spr.png
+mon.png
+
+.idea/
+.vscode/
+.DS_Store
